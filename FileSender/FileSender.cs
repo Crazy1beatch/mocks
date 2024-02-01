@@ -66,6 +66,7 @@ namespace FileSender
     [TestFixture]
     public class FileSender_Should
     {
+        private const string validFormat = "4.0";
         private FileSender fileSender;
         private ICryptographer cryptographer;
         private ISender sender;
@@ -78,82 +79,101 @@ namespace FileSender
         [SetUp]
         public void SetUp()
         {
-            // Постарайтесь вынести в SetUp всё неспецифическое конфигурирование так,
-            // чтобы в конкретных тестах осталась только специфика теста,
-            // без конфигурирования "обычного" сценария работы
-
-            file = new File("someFile", new byte[] {1, 2, 3});
-            signedContent = new byte[] {1, 7};
+            file = new File("someFile", new byte[] { 1, 2, 3 });
+            signedContent = new byte[] { 1, 7 };
 
             cryptographer = A.Fake<ICryptographer>();
             sender = A.Fake<ISender>();
             recognizer = A.Fake<IRecognizer>();
             fileSender = new FileSender(cryptographer, sender, recognizer);
+            SetDocumentWith(DateTime.Now);
+            A.CallTo(() => cryptographer.Sign(null, null))
+                .WithAnyArguments().Returns(signedContent);
+            A.CallTo(() => sender.TrySend(null))
+                .WithAnyArguments().Returns(true);
         }
 
         [TestCase("4.0")]
         [TestCase("3.1")]
         public void Send_WhenGoodFormat(string format)
         {
-            var document = new Document(file.Name, file.Content, DateTime.Now, format);
-            A.CallTo(() => recognizer.TryRecognize(file, out document))
-                .Returns(true);
-            A.CallTo(() => cryptographer.Sign(document.Content, certificate))
-                .Returns(signedContent);
-            A.CallTo(() => sender.TrySend(signedContent))
-                .Returns(true);
+            SetDocumentWith(DateTime.Now, format: format);
+            fileSender.SendFiles(new[] { file }, certificate)
+                .SkippedFiles.Should().BeEmpty();
+        }
 
-            fileSender.SendFiles(new[] {file}, certificate)
+        [TestCase("abracadabra")]
+        [TestCase("3.0")]
+        public void Skip_WhenBadFormat(string format)
+        {
+            SetDocumentWith(DateTime.Now, format: format);
+            fileSender.SendFiles(new[] { file }, certificate)
+                .SkippedFiles.Should().HaveCount(1).And.BeEquivalentTo(file);
+        }
+
+        [Test]
+        public void Skip_WhenOlderThanAMonth()
+        {
+            SetDocumentWith(DateTime.Now.AddMonths(-1));
+            fileSender.SendFiles(new[] { file }, certificate)
+                .SkippedFiles.Should().HaveCount(1).And.BeEquivalentTo(file);
+        }
+
+        [TestCase(0)]
+        [TestCase(3600)]
+        [TestCase(86400)]
+        [TestCase(2591999)]
+        public void Send_WhenYoungerThanAMonth(int addedSeconds)
+        {
+            SetDocumentWith(DateTime.Now + new TimeSpan(addedSeconds));
+            fileSender.SendFiles(new[] { file }, certificate)
                 .SkippedFiles.Should().BeEmpty();
         }
 
         [Test]
-        [Ignore("Not implemented")]
-        public void Skip_WhenBadFormat()
-        {
-            throw new NotImplementedException();
-        }
-
-        [Test]
-        [Ignore("Not implemented")]
-        public void Skip_WhenOlderThanAMonth()
-        {
-            throw new NotImplementedException();
-        }
-
-        [Test]
-        [Ignore("Not implemented")]
-        public void Send_WhenYoungerThanAMonth()
-        {
-            throw new NotImplementedException();
-        }
-
-        [Test]
-        [Ignore("Not implemented")]
         public void Skip_WhenSendFails()
         {
-            throw new NotImplementedException();
+            A.CallTo(() => sender.TrySend(signedContent))
+                .Returns(false);
+            fileSender.SendFiles(new[] { file }, certificate)
+                .SkippedFiles.Should().HaveCount(1).And.BeEquivalentTo(file);
         }
 
         [Test]
-        [Ignore("Not implemented")]
         public void Skip_WhenNotRecognized()
         {
-            throw new NotImplementedException();
+            SetDocumentWith(DateTime.Now, isRecognized: false);
+            fileSender.SendFiles(new[] { file }, certificate)
+                .SkippedFiles.Should().HaveCount(1).And.BeEquivalentTo(file);
         }
 
         [Test]
-        [Ignore("Not implemented")]
         public void IndependentlySend_WhenSeveralFilesAndSomeAreInvalid()
         {
-            throw new NotImplementedException();
+            SetDocumentWith(DateTime.Now, format: "4.0", times: 1);
+            SetDocumentWith(DateTime.Now.AddMonths(-1), times: 1);
+            SetDocumentWith(DateTime.Now, format: "3.0", times: 1);
+
+            fileSender.SendFiles(new[] { file, file, file }, certificate)
+                .SkippedFiles.Should().HaveCount(2);
         }
 
         [Test]
-        [Ignore("Not implemented")]
         public void IndependentlySend_WhenSeveralFilesAndSomeCouldNotSend()
         {
-            throw new NotImplementedException();
+            A.CallTo(() => sender.TrySend(null))
+                .WithAnyArguments().ReturnsNextFromSequence(true, false, true);
+            fileSender.SendFiles(new[] { file, file, file }, certificate)
+                .SkippedFiles.Should().HaveCount(1);
+        }
+
+        private void SetDocumentWith(DateTime time, string format = validFormat, bool isRecognized = true,
+            int times = int.MaxValue)
+        {
+            var document = new Document(file.Name, file.Content, time, format);
+            A.CallTo(() => recognizer.TryRecognize(null, out document))
+                .WithAnyArguments()
+                .Returns(isRecognized).NumberOfTimes(times);
         }
     }
 }
