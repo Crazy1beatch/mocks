@@ -1,12 +1,14 @@
 ﻿using System.Collections.Generic;
+using FakeItEasy;
+using FluentAssertions;
 using NUnit.Framework;
 
 namespace MockFramework
 {
     public class ThingCache
     {
-        private readonly IDictionary<string, Thing> dictionary
-            = new Dictionary<string, Thing>();
+        private readonly IDictionary<string, Thing> dictionary = new Dictionary<string, Thing>();
+
         private readonly IThingService thingService;
 
         public ThingCache(IThingService thingService)
@@ -24,6 +26,7 @@ namespace MockFramework
                 dictionary[thingId] = thing;
                 return thing;
             }
+
             return null;
         }
     }
@@ -39,50 +42,71 @@ namespace MockFramework
 
         private const string thingId2 = "CoolBoots";
         private Thing thing2 = new Thing(thingId2);
-
-        // Метод, помеченный атрибутом SetUp, выполняется перед каждым тестов
+        
         [SetUp]
         public void SetUp()
         {
-            //thingService = A...
+            thingService = A.Fake<IThingService>();
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1))
+                .Returns(true)
+                .AssignsOutAndRefParameters(thing1);
+            A.CallTo(() => thingService.TryRead(thingId2, out thing2))
+                .Returns(true)
+                .AssignsOutAndRefParameters(thing2);
             thingCache = new ThingCache(thingService);
         }
-
-        // TODO: Написать простейший тест, а затем все остальные
-        // Live Template tt работает!
-
-        // Пример теста
+        
         [Test]
-        public void GiveMeAGoodNamePlease()
+        public void CallsIThingServiceWhenNotCached()
         {
+            thingCache.Get(thingId1).Should().BeEquivalentTo(thing1);
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1)).MustHaveHappenedOnceExactly();
         }
 
-        /** Проверки в тестах
-         * Assert.AreEqual(expectedValue, actualValue);
-         * actualValue.Should().Be(expectedValue);
-         */
+        [Test]
+        public void CallsIThingServiceOnceWhenCached()
+        {
+            thingCache.Get(thingId1).Should().BeEquivalentTo(thing1);
+            thingCache.Get(thingId1).Should().BeEquivalentTo(thing1);
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1)).MustHaveHappenedOnceExactly();
+        }
 
-        /** Синтаксис AAA
-         * Arrange:
-         * var fake = A.Fake<ISomeService>();
-         * A.CallTo(() => fake.SomeMethod(...)).Returns(true);
-         * Assert:
-         * var value = "42";
-         * A.CallTo(() => fake.TryRead(id, out value)).MustHaveHappened();
-         */
+        [Test]
+        public void CallsIThingServiceOnceWhenCachedSeveralThings()
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                thingCache.Get(thingId1).Should().BeEquivalentTo(thing1);
+                thingCache.Get(thingId2).Should().BeEquivalentTo(thing2);
+            }
 
-        /** Синтаксис out
-         * var value = "42";
-         * string _;
-         * A.CallTo(() => fake.TryRead(id, out _)).Returns(true)
-         *     .AssignsOutAndRefParameters(value);
-         * A.CallTo(() => fake.TryRead(id, out value)).Returns(true);
-         */
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1)).MustHaveHappenedOnceExactly();
+            A.CallTo(() => thingService.TryRead(thingId2, out thing2)).MustHaveHappenedOnceExactly();
+        }
 
-        /** Синтаксис Repeat
-         * var value = "42";
-         * A.CallTo(() => fake.TryRead(id, out value))
-         *     .MustHaveHappened(Repeated.Exactly.Twice)
-         */
+        [Test]
+        public void ShouldReturnBullWhenNotFoundInService()
+        {
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1))
+                .Returns(false);
+            thingCache.Get(thingId1).Should().Be(null);
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1)).MustHaveHappenedOnceExactly();
+        }
+
+        [Test]
+        public void ShouldCallAgainWhenNotFoundInService()
+        {
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1))
+                .Returns(false);
+            var failedTimes = 2;
+            for (var i = 0; i < failedTimes; i++)
+                thingCache.Get(thingId1).Should().Be(null);
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1))
+                .Returns(true)
+                .AssignsOutAndRefParameters(thing1);
+            thingCache.Get(thingId1).Should().BeEquivalentTo(thing1);
+            A.CallTo(() => thingService.TryRead(thingId1, out thing1))
+                .MustHaveHappened(failedTimes + 1, Times.Exactly);
+        }
     }
 }
